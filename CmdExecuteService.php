@@ -63,18 +63,12 @@ class CmdExecuteService
     {
         $this->output = $output = fopen("php://temp", 'w+b');
         $this->toClose[] = $output;
+        $error = fopen("php://temp", 'w+b');
+        $this->toClose[] = $error;
 
-        // Default to use pipes for STDIN and STDERR.
         $descr = array(
-          0 => array(
-            'pipe',
-            'r'
-          ),
           1 => $output,
-          2 => array(
-            'pipe',
-            'w'
-          )
+          2 => $error,
         );
 
         if (gettype($data) == "resource") {
@@ -94,10 +88,13 @@ class CmdExecuteService
         $cmd = escapeshellcmd($cmd);
         $process = proc_open($cmd, $descr, $pipes);
 
+        $exit_code = proc_close($process);
+
         // On error, extract message from STDERR and throw an exception.
         if ($exit_code != 0) {
-            $msg = stream_get_contents($pipes[2]);
-            $this->cleanup($pipes, $process);
+            rewind($error);
+            $msg = stream_get_contents($error);
+            $this->cleanup();
             if ($this->log) {
                 $this->log->error('Process exited with non-zero code.', [
                   'exit_code' => $exit_code,
@@ -108,25 +105,19 @@ class CmdExecuteService
         }
 
         // Return a function that streams the output.
-        return function () use ($pipes, $process, $output) {
+        return function () use ($output) {
             rewind($output);
             fpassthru($output);
             ob_flush();
             flush();
-            $this->cleanup($pipes, $process);
+            $this->cleanup();
         };
     }
 
-    protected function cleanup($pipes, $process)
+    protected function cleanup()
     {
-        // Close STDERR
-        fclose($pipes[2]);
-
         foreach ($this->toClose as $to_close) {
           fclose($to_close);
         }
-
-        // Close the process
-        proc_close($process);
     }
 }
