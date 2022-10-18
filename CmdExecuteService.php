@@ -78,6 +78,7 @@ class CmdExecuteService
         );
 
         if (gettype($data) == "resource") {
+            // Use our passed resource instead of the pipe.
             $descr[0] = $data;
             $this->toClose[] = $data;
         }
