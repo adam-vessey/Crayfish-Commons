@@ -86,8 +86,19 @@ class CmdExecuteService
 
         // Start process.
         $cmd = escapeshellcmd($cmd);
-        $process = proc_open($cmd, $descr, $pipes);
 
+        $process = proc_open($cmd, $descr, $pipes);
+        if (gettype($data) == "resource" && $process === FALSE) {
+          // Expecting that the passed resource is an in-memory construct that
+          // is not automatically dealt with (such as "php://memory"), so let's
+          // deal with it by copying it to one that is ("php://temp").
+          $descr[0] = fopen("php://temp", "w+b");
+          $this->toClose[] = $descr[0];
+          rewind($data);
+          stream_copy_to_stream($data, $descr[0]);
+          rewind($descr[0]);
+          $process = proc_open($cmd, $descr, $pipes);
+        }
         $exit_code = proc_close($process);
 
         // On error, extract message from STDERR and throw an exception.
