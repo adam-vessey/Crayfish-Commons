@@ -87,7 +87,9 @@ class CmdExecuteService
         // Start process.
         $cmd = escapeshellcmd($cmd);
 
-        $process = proc_open($cmd, $descr, $pipes);
+        // XXX: Suppress warnings initially, expecting sometimes to complain
+        // about being passed a "php://memory" stream.
+        $process = @proc_open($cmd, $descr, $pipes);
         if (gettype($data) == "resource" && $process === FALSE) {
           // Expecting that the passed resource is an in-memory construct that
           // is not automatically dealt with (such as "php://memory"), so let's
