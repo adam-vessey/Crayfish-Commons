@@ -23,12 +23,19 @@ class CmdExecuteService
     protected $output;
 
     /**
+     * Array of resource to be fclose()'d on ::cleanup().
+     * @var resource[]
+     */
+    protected $toClose;
+
+    /**
      * Executor constructor.
      * @param LoggerInterface $log
      */
     public function __construct(LoggerInterface $log = null)
     {
         $this->log = $log;
+        $this->toClose = [];
     }
 
     /**
@@ -54,58 +61,37 @@ class CmdExecuteService
      */
     public function execute($cmd, $data)
     {
-        // Use pipes for STDIN, STDOUT, and STDERR
+        $this->output = $output = fopen("php://temp", 'w+b');
+        $this->toClose[] = $output;
+
+        // Default to use pipes for STDIN and STDERR.
         $descr = array(
           0 => array(
             'pipe',
             'r'
-          ) ,
-          1 => array(
-            'pipe',
-            'w'
-          ) ,
+          ),
+          1 => $output,
           2 => array(
             'pipe',
             'w'
           )
         );
+
+        if (gettype($data) == "resource") {
+            $descr[0] = $data;
+            $this->toClose[] = $data;
+        }
+
+        /**
+         * To receive the array of references from proc_open().
+         *
+         * @var resource[]
+         */
         $pipes = [];
 
-        // Start process, telling it to use STDIN for input and STDOUT for output.
+        // Start process.
         $cmd = escapeshellcmd($cmd);
         $process = proc_open($cmd, $descr, $pipes);
-
-        // Get the data into pipe only if data is resource
-        if (gettype($data) == "resource") {
-            // Stream input to STDIN
-            while (!feof($data)) {
-                fwrite($pipes[0], fread($data, 1024));
-            }
-
-            // Close STDIN and the source data.
-            fclose($pipes[0]);
-            fclose($data);
-        }
-
-        // Wait for process to finish while reading STDOUT to a temp stream.
-        // Otherwise the process can block indefinitely if STODUT gets bigger
-        // than 4kb.
-        $this->output = fopen("php://temp", 'w+');
-        $exit_code = null;
-        while ($exit_code === null) {
-            $status = proc_get_status($process);
-            if ($status['running'] === false) {
-                $exit_code = $status['exitcode'];
-            }
-
-            $chunk = stream_get_contents($pipes[1]);
-            if ($chunk !== false) {
-                fwrite($this->output, $chunk);
-            }
-        }
-
-        // Close STDOUT
-        fclose($pipes[1]);
 
         // On error, extract message from STDERR and throw an exception.
         if ($exit_code != 0) {
@@ -121,13 +107,11 @@ class CmdExecuteService
         }
 
         // Return a function that streams the output.
-        return function () use ($pipes, $process) {
-            rewind($this->output);
-            while (!feof($this->output)) {
-                echo fread($this->output, 1024);
-                ob_flush();
-                flush();
-            }
+        return function () use ($pipes, $process, $output) {
+            rewind($output);
+            fpassthru($output);
+            ob_flush();
+            flush();
             $this->cleanup($pipes, $process);
         };
     }
@@ -137,8 +121,9 @@ class CmdExecuteService
         // Close STDERR
         fclose($pipes[2]);
 
-        // Close the temp output stream.
-        fclose($this->output);
+        foreach ($this->toClose as $to_close) {
+          fclose($to_close);
+        }
 
         // Close the process
         proc_close($process);
